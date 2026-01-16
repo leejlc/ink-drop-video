@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Video Task</title>
+  <style>
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      background-color: #F8F8F8;
+      margin: 0;
+      padding: 0;
+    }
+    #container {
+      max-width: 900px;
+      margin: 1em auto;
+      padding: 1em;
+      border: 4px solid black;
+      border-radius: 10px;
+      background-color: #FFFFFF;
+    }
+    #instructions {
+      margin-bottom: 1em;
+    }
+    #videoWrapper {
+      text-align: center;
+      margin-bottom: 1em;
+    }
+    #stimVideo {
+      width: 100%;
+      max-width: 800px;
+      background-color: #000;
+    }
+    #timer {
+      font-family: sans-serif;
+      font-size: 1.2em;
+      text-align: center;
+      margin-top: 0.5em;
+    }
+    #startHint {
+      text-align: center;
+      margin-top: 0.5em;
+      font-style: italic;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <div id="instructions">
+      <p>
+        In this task you will watch a video for approximately 15 minutes.
+        Please keep this window maximised and do not switch to other tabs or applications.
+      </p>
+      <p>
+        The video will start when you press any key or click once inside the page.
+      </p>
+    </div>
+
+    <div id="videoWrapper">
+      <video id="stimVideo" preload="auto" playsinline>
+        <!-- MP4 must be in the same folder as this HTML file -->
+        <source src="Ink-Drop-Video-15Min.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+      </video>
+
+      <div id="timer">Time left: 15:00</div>
+      <div id="startHint">Press any key or click to start.</div>
+    </div>
+  </div>
+
+  <script>
+    // ===== Configuration =====
+    const MAX_TIME = 15 * 60 * 1000; // 15 minutes in ms
+
+    // ===== State =====
+    let startTime = null;
+    let timerStarted = false;
+    let started = false;
+    let lostFocusCount = 0;
+    let countdownInterval = null;
+
+    const video = document.getElementById('stimVideo');
+    const timerElem = document.getElementById('timer');
+    const startHint = document.getElementById('startHint');
+
+    // ===== URL parameter helper =====
+    function getQueryParam(name) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(name);
+    }
+
+    // ===== Countdown display =====
+    function updateCountdownDisplay() {
+      if (!timerElem) return;
+
+      if (!timerStarted || startTime === null) {
+        timerElem.textContent = 'Time left: 15:00';
+        return;
+      }
+
+      const now = Date.now();
+      const elapsed = now - startTime;
+      const remainingMs = Math.max(0, MAX_TIME - elapsed);
+      const totalSeconds = Math.floor(remainingMs / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+
+      const mm = String(minutes).padStart(2, '0');
+      const ss = String(seconds).padStart(2, '0');
+      timerElem.textContent = 'Time left: ' + mm + ':' + ss;
+    }
+
+    // ===== Start task on first interaction =====
+    function startTask() {
+      if (started) return;
+      started = true;
+
+      if (startHint) {
+        startHint.style.display = 'none';
+      }
+
+      video.play().catch(err => {
+        console.error('Video play failed:', err);
+      });
+
+      timerStarted = true;
+      startTime = Date.now();
+      updateCountdownDisplay();
+      countdownInterval = setInterval(updateCountdownDisplay, 1000);
+      setTimeout(endGameAndRedirect, MAX_TIME);
+
+      window.removeEventListener('keydown', startTask);
+      window.removeEventListener('click', startTask);
+    }
+
+    window.addEventListener('keydown', startTask);
+    window.addEventListener('click', startTask);
+
+    // ===== Prevent pausing / seeking as far as possible =====
+    video.addEventListener('pause', () => {
+      if (timerStarted && !video.ended) {
+        video.play().catch(() => {});
+      }
+    });
+
+    video.addEventListener('contextmenu', e => e.preventDefault());
+
+    // ===== Tab / window change warning =====
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && timerStarted) {
+        lostFocusCount += 1;
+        alert('Please keep this tab visible for the duration of the task.');
+      }
+    });
+
+    // ===== Redirect after 15 minutes =====
+    function endGameAndRedirect() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+      }
+
+      const endTime = Date.now();
+      const durationMs = startTime ? (endTime - startTime) : 0;
+
+      const baseReturnUrl = getQueryParam('returnUrl');
+
+      if (baseReturnUrl) {
+        const url = new URL(baseReturnUrl);
+
+        url.searchParams.set('ControlDurationMs', durationMs.toString());
+        url.searchParams.set('ControlDone', '1');
+        url.searchParams.set('ControlLostFocusCount', lostFocusCount.toString());
+
+        const participantId = getQueryParam('ParticipantID');
+        if (participantId) {
+          url.searchParams.set('ParticipantID', participantId);
+        }
+
+        window.location.href = url.toString();
+      } else {
+        alert('Time is up. Thank you.');
+      }
+    }
+
+    window.addEventListener('load', updateCountdownDisplay);
+  </script>
+</body>
+</html>
