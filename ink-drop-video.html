@@ -50,7 +50,7 @@
     <div id="instructions">
       <p>
         In this task you will watch a video for approximately 15 minutes.
-        Please keep this window maximised and do not switch to other tabs or applications. The video and countdown clock will pause if you do, and the page will report the total time taken to complete the video. If this is excessively long, you may not be invited to the final part of the study.
+        Please keep this window maximised and do not switch to other tabs or applications. The page will note if you do so.
       </p>
       <p>
         The video will start when you press any key or click once inside the page.
@@ -76,11 +76,13 @@
     let started = false;
     let lostFocusCount = 0;
 
-    // "Visible time" accounting:
-    // - visibleAccumulatedMs: how much time so far while tab was visible
-    // - visibleLastStart: timestamp when we last *started* counting (tab became visible)
+    // Visible time accounting
     let visibleAccumulatedMs = 0;
     let visibleLastStart = null;
+
+    // Hidden/paused time accounting
+    let hiddenAccumulatedMs = 0;
+    let hiddenLastStart = null;
 
     let countdownInterval = null;
     let redirectScheduled = false;
@@ -95,11 +97,19 @@
       return params.get(name);
     }
 
-    // ===== Helpers for visible time =====
+    // ===== Helpers for visible/hidden time =====
     function getVisibleElapsedMs() {
       let total = visibleAccumulatedMs;
       if (visibleLastStart !== null) {
         total += (Date.now() - visibleLastStart);
+      }
+      return total;
+    }
+
+    function getHiddenElapsedMs() {
+      let total = hiddenAccumulatedMs;
+      if (hiddenLastStart !== null) {
+        total += (Date.now() - hiddenLastStart);
       }
       return total;
     }
@@ -132,7 +142,7 @@
         startHint.style.display = 'none';
       }
 
-      // Start counting visible time if we're currently visible
+      // Start counting visible time if currently visible
       if (!document.hidden) {
         visibleLastStart = Date.now();
       }
@@ -148,7 +158,6 @@
       updateCountdownDisplay();
       countdownInterval = setInterval(() => {
         updateCountdownDisplay();
-        // When the remaining time hits zero on a tick, redirect once
         if (!redirectScheduled && getRemainingMs() <= 0) {
           redirectScheduled = true;
           endGameAndRedirect();
@@ -176,34 +185,42 @@
       if (!started) return;
 
       if (document.hidden) {
-        // User leaves tab: stop counting visible time and pause video
-        lostFocusCount += 1;
-
-        // Stop visible-time accumulation
+        // End current visible segment
         if (visibleLastStart !== null) {
           visibleAccumulatedMs += (Date.now() - visibleLastStart);
           visibleLastStart = null;
         }
 
-        // Pause video
+        // Start hidden segment
+        if (hiddenLastStart === null) {
+          hiddenLastStart = Date.now();
+        }
+
+        lostFocusCount += 1;
+
         if (!video.paused && !video.ended) {
           video.pause();
         }
 
         alert('Please keep this tab visible for the duration of the task.');
       } else {
-        // User returns to the tab
-        visibleLastStart = Date.now();
+        // End hidden segment
+        if (hiddenLastStart !== null) {
+          hiddenAccumulatedMs += (Date.now() - hiddenLastStart);
+          hiddenLastStart = null;
+        }
 
-        // Resume video if not ended
+        // Start visible segment
+        if (visibleLastStart === null) {
+          visibleLastStart = Date.now();
+        }
+
         if (video.paused && !video.ended) {
           video.play().catch(() => {});
         }
 
-        // Update countdown immediately
         updateCountdownDisplay();
 
-        // If we've already used up the time while visible, redirect now
         if (!redirectScheduled && getRemainingMs() <= 0) {
           redirectScheduled = true;
           endGameAndRedirect();
@@ -217,13 +234,20 @@
         clearInterval(countdownInterval);
       }
 
-      // Finalize visible elapsed time
+      // Finalize visible time
       if (visibleLastStart !== null) {
         visibleAccumulatedMs += (Date.now() - visibleLastStart);
         visibleLastStart = null;
       }
 
-      const durationMs = getVisibleElapsedMs();
+      // Finalize hidden time
+      if (hiddenLastStart !== null) {
+        hiddenAccumulatedMs += (Date.now() - hiddenLastStart);
+        hiddenLastStart = null;
+      }
+
+      const durationMs = getVisibleElapsedMs();   // active time
+      const hiddenMs = getHiddenElapsedMs();      // paused/hidden time
 
       const baseReturnUrl = getQueryParam('returnUrl');
 
@@ -231,6 +255,7 @@
         const url = new URL(baseReturnUrl);
 
         url.searchParams.set('ControlDurationMs', durationMs.toString());
+        url.searchParams.set('ControlHiddenMs', hiddenMs.toString());
         url.searchParams.set('ControlDone', '1');
         url.searchParams.set('ControlLostFocusCount', lostFocusCount.toString());
 
