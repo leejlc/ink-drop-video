@@ -50,7 +50,7 @@
     <div id="instructions">
       <p>
         In this task you will watch a video for approximately 15 minutes.
-        Please keep this window maximised and do not switch to other tabs or applications. The page will note if you do so.
+        Please keep this window maximised and do not switch to other tabs or applications. The video and countdown clock will pause if you do, and the page will report the total time taken to complete the video. If this is excessively long, you may not be invited to the final part of the study.
       </p>
       <p>
         The video will start when you press any key or click once inside the page.
@@ -59,7 +59,6 @@
 
     <div id="videoWrapper">
       <video id="stimVideo" preload="auto" playsinline>
-        <!-- MP4 must be in the same folder as this HTML file -->
         <source src="Ink-Drop-Video-15Min.mp4" type="video/mp4">
         Your browser does not support the video tag.
       </video>
@@ -74,11 +73,17 @@
     const MAX_TIME = 15 * 60 * 1000; // 15 minutes in ms
 
     // ===== State =====
-    let startTime = null;
-    let timerStarted = false;
     let started = false;
     let lostFocusCount = 0;
+
+    // "Visible time" accounting:
+    // - visibleAccumulatedMs: how much time so far while tab was visible
+    // - visibleLastStart: timestamp when we last *started* counting (tab became visible)
+    let visibleAccumulatedMs = 0;
+    let visibleLastStart = null;
+
     let countdownInterval = null;
+    let redirectScheduled = false;
 
     const video = document.getElementById('stimVideo');
     const timerElem = document.getElementById('timer');
@@ -90,18 +95,25 @@
       return params.get(name);
     }
 
+    // ===== Helpers for visible time =====
+    function getVisibleElapsedMs() {
+      let total = visibleAccumulatedMs;
+      if (visibleLastStart !== null) {
+        total += (Date.now() - visibleLastStart);
+      }
+      return total;
+    }
+
+    function getRemainingMs() {
+      const elapsed = getVisibleElapsedMs();
+      return Math.max(0, MAX_TIME - elapsed);
+    }
+
     // ===== Countdown display =====
     function updateCountdownDisplay() {
       if (!timerElem) return;
 
-      if (!timerStarted || startTime === null) {
-        timerElem.textContent = 'Time left: 15:00';
-        return;
-      }
-
-      const now = Date.now();
-      const elapsed = now - startTime;
-      const remainingMs = Math.max(0, MAX_TIME - elapsed);
+      const remainingMs = getRemainingMs();
       const totalSeconds = Math.floor(remainingMs / 1000);
       const minutes = Math.floor(totalSeconds / 60);
       const seconds = totalSeconds % 60;
@@ -120,15 +132,28 @@
         startHint.style.display = 'none';
       }
 
-      video.play().catch(err => {
-        console.error('Video play failed:', err);
-      });
+      // Start counting visible time if we're currently visible
+      if (!document.hidden) {
+        visibleLastStart = Date.now();
+      }
 
-      timerStarted = true;
-      startTime = Date.now();
+      // Start video only if page is visible
+      if (!document.hidden) {
+        video.play().catch(err => {
+          console.error('Video play failed:', err);
+        });
+      }
+
+      // Start countdown UI
       updateCountdownDisplay();
-      countdownInterval = setInterval(updateCountdownDisplay, 1000);
-      setTimeout(endGameAndRedirect, MAX_TIME);
+      countdownInterval = setInterval(() => {
+        updateCountdownDisplay();
+        // When the remaining time hits zero on a tick, redirect once
+        if (!redirectScheduled && getRemainingMs() <= 0) {
+          redirectScheduled = true;
+          endGameAndRedirect();
+        }
+      }, 250);
 
       window.removeEventListener('keydown', startTask);
       window.removeEventListener('click', startTask);
@@ -137,31 +162,68 @@
     window.addEventListener('keydown', startTask);
     window.addEventListener('click', startTask);
 
-    // ===== Prevent pausing / seeking as far as possible =====
+    // ===== Prevent manual pausing as far as possible (only when visible) =====
     video.addEventListener('pause', () => {
-      if (timerStarted && !video.ended) {
+      if (started && !video.ended && !document.hidden) {
         video.play().catch(() => {});
       }
     });
 
     video.addEventListener('contextmenu', e => e.preventDefault());
 
-    // ===== Tab / window change warning =====
+    // ===== Tab / window visibility handling =====
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && timerStarted) {
+      if (!started) return;
+
+      if (document.hidden) {
+        // User leaves tab: stop counting visible time and pause video
         lostFocusCount += 1;
+
+        // Stop visible-time accumulation
+        if (visibleLastStart !== null) {
+          visibleAccumulatedMs += (Date.now() - visibleLastStart);
+          visibleLastStart = null;
+        }
+
+        // Pause video
+        if (!video.paused && !video.ended) {
+          video.pause();
+        }
+
         alert('Please keep this tab visible for the duration of the task.');
+      } else {
+        // User returns to the tab
+        visibleLastStart = Date.now();
+
+        // Resume video if not ended
+        if (video.paused && !video.ended) {
+          video.play().catch(() => {});
+        }
+
+        // Update countdown immediately
+        updateCountdownDisplay();
+
+        // If we've already used up the time while visible, redirect now
+        if (!redirectScheduled && getRemainingMs() <= 0) {
+          redirectScheduled = true;
+          endGameAndRedirect();
+        }
       }
     });
 
-    // ===== Redirect after 15 minutes =====
+    // ===== Redirect after 15 minutes of visible time =====
     function endGameAndRedirect() {
       if (countdownInterval) {
         clearInterval(countdownInterval);
       }
 
-      const endTime = Date.now();
-      const durationMs = startTime ? (endTime - startTime) : 0;
+      // Finalize visible elapsed time
+      if (visibleLastStart !== null) {
+        visibleAccumulatedMs += (Date.now() - visibleLastStart);
+        visibleLastStart = null;
+      }
+
+      const durationMs = getVisibleElapsedMs();
 
       const baseReturnUrl = getQueryParam('returnUrl');
 
